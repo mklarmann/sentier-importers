@@ -1,16 +1,17 @@
 """Run the full BAFU-2026 local regeneration: every ``bafu-*`` source, one process.
 
 Stages all vocab + inventory artifacts under ``--output-dir`` (dry-run —
-nothing is pushed anywhere), emits each sector's ``metadata.json`` beside its
-parquet, and optionally places the inventory files into a local
-sentier-inventory checkout.
+nothing is pushed anywhere), emits the source folder's ``metadata.json`` beside
+its two inventory parquet files (``sentier_inventory/bafu-2026-v1/``), and
+optionally places that folder into a local sentier-inventory checkout as
+``data/bafu-2026-v1/``, replacing it whole.
 Running all sources in one process lets them share a single parse of the 37 MB
 EcoSpold zip (see the memo in ``sources/bafu/ecospold.py``).
 
 Usage:
-    uv run python scripts/run_bafu_local.py \
-        [--output-dir output/bafu-2026] [--cache-dir cache] \
-        [--data-root ~/dds] [--schema-dir ../sentier-vocab/schemas] \
+    uv run python scripts/run_bafu_local.py \\
+        [--output-dir output/bafu-2026] [--cache-dir cache] \\
+        [--data-root ~/dds] [--schema-dir ../sentier-vocab/schemas] \\
         [--inventory-clone ../sentier-inventory]
 """
 
@@ -28,55 +29,59 @@ from sentier_importers.core import deliver as deliver_mod  # noqa: E402
 from sentier_importers.core import pipeline, registry  # noqa: E402
 from sentier_importers.core.context import RunContext  # noqa: E402
 from sentier_importers.core.targets import get_target  # noqa: E402
-from sentier_importers.sources.bafu.ecospold import CITATION, SECTORS  # noqa: E402
+from sentier_importers.sources.bafu import ecospold  # noqa: E402
+from sentier_importers.sources.bafu.provenance import (  # noqa: E402
+    BAFU_PROVENANCE,
+    BAFU_PROVENANCE_IRI,
+)
 
-#: Human titles for the sector folders' metadata.json.
-SECTOR_TITLES = {
-    "01-agriculture": "Agriculture",
-    "02-electricity": "Electricity",
-    "03-chemicals": "Chemicals",
-    "04-transport": "Transport",
-    "05-energy": "Energy carriers",
-    "06-waste": "Waste management",
-    "07-construction": "Construction",
-    "08-materials": "Materials",
-    "09-electronics": "Electronics",
-    "10-building-services": "Building services",
-    "99-obsolete": "Obsolete (BAFU legacy link targets)",
-}
+#: sentier-inventory schema contract this script emits (``sector`` column, source folders).
+INVENTORY_SCHEMA_VERSION = "0.3.0"
 
 
-#: sentier-inventory schema contract this script emits (``source`` column + ``sources``).
-INVENTORY_SCHEMA_VERSION = "0.2.0"
+def _distinct(table, column: str) -> list[str]:
+    return sorted(pc.drop_null(table.column(column).combine_chunks()).unique().to_pylist())
 
 
-def staged_sources(folder: Path) -> list[str]:
-    """Distinct ``processes.source`` values in a staged folder, sorted; [] without a file.
+def _assert_single_source(processes) -> None:
+    """One folder holds one release of one source: every row must say so."""
+    for column, expected in (
+        ("source", ecospold.SOURCE_ID),
+        ("source_version", ecospold.SOURCE_VERSION),
+    ):
+        seen = _distinct(processes, column)
+        if seen != [expected]:
+            raise ValueError(f"staged processes.{column} must be [{expected!r}], found {seen}")
 
-    Read from the parquet rather than from a constant so the list stays right when a
-    second importer stages rows into the same sector folder.
+
+def source_metadata(folder: Path) -> dict:
+    """``metadata.json`` content for the staged source folder.
+
+    ``sectors`` and ``row_counts`` are read from the staged parquet; the bibliographic
+    keys come from ``sources/bafu/provenance.py`` and ``ecospold``. Raises
+    ``FileNotFoundError`` without a ``processes.parquet`` and ``ValueError`` when the
+    rows do not all carry this source and version.
     """
-    path = folder / "processes.parquet"
-    if not path.exists():
-        return []
-    column = pq.read_table(path, columns=["source"]).column("source")
-    return sorted(pc.drop_null(column.combine_chunks()).unique().to_pylist())
-
-
-def sector_metadata(sector: str, folder: Path) -> dict:
-    """metadata.json content for one staged sector folder, row counts and sources included."""
-    row_counts = {}
-    for table in ("processes", "exchanges"):
-        path = folder / f"{table}.parquet"
-        if path.exists():
-            row_counts[f"{table}.parquet"] = pq.read_metadata(path).num_rows
+    processes = pq.read_table(
+        folder / "processes.parquet", columns=["sector", "source", "source_version"]
+    )
+    _assert_single_source(processes)
+    row_counts = {"processes.parquet": processes.num_rows}
+    exchanges = folder / "exchanges.parquet"
+    if exchanges.exists():
+        row_counts["exchanges.parquet"] = pq.read_metadata(exchanges).num_rows
     return {
-        "sector": sector.split("-", 1)[1],
-        "title": SECTOR_TITLES[sector],
-        "description": f"Source: {CITATION}.",
-        "rank": int(sector.split("-", 1)[0]),
+        "source": ecospold.SOURCE_ID,
+        "source_version": ecospold.SOURCE_VERSION,
+        "title": BAFU_PROVENANCE["title"],
+        "publisher": BAFU_PROVENANCE["publisher"],
+        "license": ecospold.LICENSE_SUMMARY,
+        "citation": BAFU_PROVENANCE["citation"],
+        "source_url": None,
+        "provenance": BAFU_PROVENANCE_IRI,
+        "retrieved": None,
         "schema_version": INVENTORY_SCHEMA_VERSION,
-        "sources": staged_sources(folder),
+        "sectors": _distinct(processes, "sector"),
         "row_counts": row_counts,
     }
 
@@ -95,7 +100,8 @@ def main() -> None:
     parser.add_argument(
         "--inventory-clone",
         default=None,
-        help="Also place inventory files + metadata.json into this sentier-inventory checkout.",
+        help="Also place the inventory folder (parquet + metadata.json) into this "
+        "sentier-inventory checkout as data/%s/." % ecospold.SOURCE_FOLDER,
     )
     args = parser.parse_args()
 
@@ -119,25 +125,20 @@ def main() -> None:
         out = pipeline.run_source(registry.load_source(config), ctx)
         print(f"{config.name:36} -> {out}  ({time.monotonic() - start:.1f}s)", flush=True)
 
-    inventory_root = ctx.output_dir / "sentier_inventory"
-    for sector in SECTORS:
-        folder = inventory_root / sector
-        if not folder.is_dir():
-            continue
-        metadata = sector_metadata(sector, folder)
-        (folder / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-        print(f"metadata.json {sector}: {metadata['row_counts']}")
+    folder = ctx.output_dir / "sentier_inventory" / ecospold.SOURCE_FOLDER
+    metadata = source_metadata(folder)
+    (folder / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False) + "\n"
+    )
+    print(f"metadata.json {ecospold.SOURCE_FOLDER}: {metadata['row_counts']}")
 
     if args.inventory_clone:
         clone = Path(args.inventory_clone)
-        target = get_target("sentier_inventory")
-        for sector in SECTORS:
-            folder = inventory_root / sector
-            files = sorted(folder.glob("*.parquet")) + [folder / "metadata.json"]
-            deliver_mod.deliver_local(
-                [f for f in files if f.exists()], target, category=sector, root=clone
-            )
-        print(f"placed inventory files into {clone}")
+        files = sorted(folder.glob("*.parquet")) + [folder / "metadata.json"]
+        deliver_mod.deliver_local(
+            files, get_target("sentier_inventory"), category=ecospold.SOURCE_FOLDER, root=clone
+        )
+        print(f"placed data/{ecospold.SOURCE_FOLDER}/ into {clone}")
 
 
 if __name__ == "__main__":

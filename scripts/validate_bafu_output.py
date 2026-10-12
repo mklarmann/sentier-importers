@@ -1,15 +1,18 @@
 """Validate a staged BAFU-2026 regeneration.
 
-Checks, over ``--output-dir`` (default ``output/bafu-2026``):
-  1. dataset count across sector processes files == expected (11,947 for v1);
+Checks, over ``--output-dir`` (default ``output/bafu-2026``), where the inventory
+is staged as one source folder ``sentier_inventory/bafu-2026-v1/``:
+  1. dataset count in processes.parquet == expected (11,947 for v1), with the
+     per-sector breakdown read from the ``sector`` column (every value a known id);
   2. no duplicate process ids; every exchange's process_id has a process row;
   3. zero unresolved technosphere flows (every technosphere ``flow`` is a process id);
   4. every biosphere ``flow`` id exists in the staged vocab flow terms;
-  5. exchange enum values within the sentier-inventory schema enums;
+  5. process/exchange enum values within the sentier-inventory schema enums;
   6. required columns non-null; per-file size < 50 MB;
-  7. every sector metadata.json validates against schema/metadata.schema.json
+  7. the folder's metadata.json validates against schema/metadata.schema.json
      (when a sentier-inventory checkout is given via --inventory-repo), and its
-     ``sources`` list equals the distinct ``source`` values of the sector's processes;
+     ``source``, ``source_version``, ``sectors`` and ``row_counts`` agree with the
+     staged tables;
   8. optional LCIA-workbook coverage: every (name, location) in BAFU's own
      results workbook appears in the staged processes (encoding-normalized).
 
@@ -22,11 +25,13 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
-from sentier_importers.sources.bafu.ecospold import SECTORS  # noqa: E402
+from sentier_importers.sources.bafu import ecospold  # noqa: E402
 
 FLOW_TYPES = {"production", "technosphere", "biosphere"}
 DIRECTIONS = {"input", "output"}
@@ -42,6 +47,37 @@ def check(ok: bool, message: str) -> None:
         _FAILURES.append(message)
 
 
+def sector_counts(processes: pa.Table) -> dict[str, int]:
+    """Process rows per ``sector`` value, sorted by sector id."""
+    counts = pc.value_counts(processes.column("sector").combine_chunks()).to_pylist()
+    return {row["values"]: row["counts"] for row in sorted(counts, key=lambda r: r["values"])}
+
+
+def metadata_mismatches(meta: dict, processes: pa.Table, *, exchange_rows: int) -> list[str]:
+    """Where ``metadata.json`` disagrees with the staged tables, one message per key."""
+    distinct = {
+        column: sorted(set(processes.column(column).to_pylist()))
+        for column in ("source", "source_version", "sector")
+    }
+    expected = {
+        "source": [meta.get("source")],
+        "source_version": [meta.get("source_version")],
+        "sector": sorted(meta.get("sectors", [])),
+    }
+    mismatches = [
+        f"{column if column != 'sector' else 'sectors'}: parquet {distinct[column]} "
+        f"vs metadata {expected[column]}"
+        for column in distinct
+        if distinct[column] != expected[column]
+    ]
+    actual_rows = {"processes.parquet": processes.num_rows, "exchanges.parquet": exchange_rows}
+    for name, rows in actual_rows.items():
+        declared = meta.get("row_counts", {}).get(name)
+        if declared != rows:
+            mismatches.append(f"row_counts {name}: parquet {rows} vs metadata {declared}")
+    return mismatches
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", default="output/bafu-2026")
@@ -51,29 +87,33 @@ def main() -> None:
     args = parser.parse_args()
 
     out = Path(args.output_dir)
-    inventory = out / "sentier_inventory"
+    folder = out / "sentier_inventory" / ecospold.SOURCE_FOLDER
 
-    processes = []
-    exchanges = []
-    for sector in SECTORS:
-        for name, acc in (("processes", processes), ("exchanges", exchanges)):
-            path = inventory / sector / f"{name}.parquet"
-            if path.exists():
-                acc.append(pq.read_table(path))
-                size_mb = path.stat().st_size / 1e6
-                check(size_mb < MAX_FILE_MB, f"{sector}/{name}.parquet {size_mb:.1f} MB < 50 MB")
-
-    import pyarrow as pa
-
-    # permissive: a sector where e.g. every uncertainty value is null infers a
-    # different column type than one with values; unify instead of failing
-    proc = pa.concat_tables(processes, promote_options="permissive")
-    exch = pa.concat_tables(exchanges, promote_options="permissive")
+    tables = {}
+    for name in ("processes", "exchanges"):
+        path = folder / f"{name}.parquet"
+        check(path.exists(), f"{ecospold.SOURCE_FOLDER}/{name}.parquet staged")
+        if not path.exists():
+            raise SystemExit(1)
+        tables[name] = pq.read_table(path)
+        size_mb = path.stat().st_size / 1e6
+        check(
+            size_mb < MAX_FILE_MB,
+            f"{ecospold.SOURCE_FOLDER}/{name}.parquet {size_mb:.1f} MB < 50 MB",
+        )
+    proc, exch = tables["processes"], tables["exchanges"]
 
     ids = proc.column("process_id").to_pylist()
     check(
         len(ids) == args.expected_datasets,
         f"process count {len(ids)} == {args.expected_datasets}",
+    )
+    per_sector = sector_counts(proc)
+    print("     per sector: " + ", ".join(f"{k} {v}" for k, v in per_sector.items()))
+    unknown_sectors = sorted(set(per_sector) - set(ecospold.SECTORS))
+    check(
+        not unknown_sectors,
+        f"sector values within ecospold.SECTORS ({unknown_sectors} unknown)",
     )
     id_set = set(ids)
     check(len(id_set) == len(ids), "process ids unique")
@@ -127,27 +167,19 @@ def main() -> None:
         schema = json.loads(
             (Path(args.inventory_repo) / "schema" / "metadata.schema.json").read_text()
         )
-        sources_mismatch = []
-        for sector in SECTORS:
-            meta_path = inventory / sector / "metadata.json"
-            if not meta_path.exists():
-                continue
+        meta_path = folder / "metadata.json"
+        check(meta_path.exists(), f"{ecospold.SOURCE_FOLDER}/metadata.json staged")
+        if meta_path.exists():
             meta = json.loads(meta_path.read_text())
             jsonschema.validate(meta, schema)
-            proc_path = inventory / sector / "processes.parquet"
-            if proc_path.exists():
-                column = pq.read_table(proc_path, columns=["source"]).column("source")
-                seen = sorted(set(column.to_pylist()))
-                if None in seen or seen != sorted(meta.get("sources", [])):
-                    sources_mismatch.append(
-                        f"{sector}: parquet {seen} vs metadata {meta.get('sources')}"
-                    )
-        check(True, "sector metadata.json files validate")
-        check(
-            not sources_mismatch,
-            f"metadata sources match processes.source ({len(sources_mismatch)} mismatch)"
-            + (": " + "; ".join(sources_mismatch) if sources_mismatch else ""),
-        )
+            check(True, f"{ecospold.SOURCE_FOLDER}/metadata.json validates against the schema")
+            mismatches = metadata_mismatches(meta, proc, exchange_rows=exch.num_rows)
+            check(
+                not mismatches,
+                f"metadata source/source_version/sectors/row_counts match the staged tables "
+                f"({len(mismatches)} mismatch)"
+                + (": " + "; ".join(mismatches) if mismatches else ""),
+            )
 
     if args.lcia_workbook:
         import pandas as pd

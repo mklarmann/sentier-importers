@@ -75,6 +75,7 @@ tests/             core/ framework tests, sources/ plugin tests
 - Outputs: YAML or JSON for vocabulary terms, Parquet for bulk tables, randonneur JSON for mappings. Never TTL.
 - Most sources are `enabled: false`. Big imports are opt-in so `run --all` stays fast.
 - The Agribalyse, EF and BAFU sources read local `file://` paths. See "Local inputs" below.
+- Inventory tables go to one folder per source release, `data/<source>-<source_version>/` (the registry `category`, e.g. `bafu-2026-v1`), with the sector as a column on `processes.parquet`. A delivery replaces that folder whole; sources never share a folder.
 
 ### Local inputs
 

@@ -1,8 +1,9 @@
-"""BAFU-2026 -> sentier-inventory ``processes.parquet``, one registry entry per sector.
+"""BAFU-2026 -> sentier-inventory ``processes.parquet``, one registry entry per release.
 
-Each entry's ``category`` is the sector folder (``NN-<sector>``); ``transform``
-keeps only the datasets whose BAFU category routes there. Rows follow the
-sentier-inventory ``schema/process.yaml`` contract exactly.
+The entry's ``category`` is the source folder (``ecospold.SOURCE_FOLDER``,
+``data/bafu-2026-v1/``); ``transform`` emits every dataset and writes the sector
+its BAFU category routes to into the ``sector`` column. Rows follow the
+sentier-inventory ``schema/process.yaml`` contract exactly, column order included.
 """
 
 from sentier_importers.core.source import Source
@@ -20,7 +21,7 @@ def process_comment(record: Record) -> str:
 
 
 class BafuInventoryProcessesSource(Source):
-    """Emit the process table rows for one sector folder."""
+    """Emit the process table rows of the whole release, sector as a column."""
 
     def parse(self, raw: RawData) -> Records:
         return ecospold.parse_ecospold_zip(raw)
@@ -28,8 +29,6 @@ class BafuInventoryProcessesSource(Source):
     def transform(self, records: Records) -> Rows:
         rows: Rows = []
         for record in records:
-            if ecospold.sector_for(record["category"]) != self.config.category:
-                continue
             row: Record = {
                 "process_id": record["uuid"],
                 "name": record["name"],
@@ -39,6 +38,7 @@ class BafuInventoryProcessesSource(Source):
                 "reference_amount": record["amount"],
                 "location": record["location"],
                 "process_type": "unit",
+                "sector": ecospold.sector_for(record["category"]),
                 "source": ecospold.SOURCE_ID,
                 "source_version": ecospold.SOURCE_VERSION,
                 "technology": record["technology"],
