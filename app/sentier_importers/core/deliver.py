@@ -1,5 +1,11 @@
 """Deliver stage: clone the target repo, branch, copy emitted files into the target's
-path, commit, push, and open a PR via ``gh``. A no-op in dry-run mode."""
+path, commit, push, and open a PR via ``gh``. A no-op in dry-run mode.
+
+Delivery copies over whatever the target already holds at the same path, no merge.
+For inventory targets the category folder is the source folder (``data/<source>-
+<source_version>/``), so a full overwrite is the intended semantics: a run for a
+source rewrites its own folder whole, and sources never share a folder or a file.
+"""
 
 import shutil
 import subprocess
@@ -33,7 +39,9 @@ def deliver_local(files: list[Path], target: Target, *, category: str, root: Pat
     Places each file at ``root/<output_subdir>/<category>/<name>``, preserving the
     category folder (unlike :func:`deliver`, which currently flattens). This is the
     regenerate-locally delivery path for sources whose data cannot be pushed to a
-    public repo yet; ``root`` must be an existing directory.
+    public repo yet; ``root`` must be an existing directory. Existing files at the
+    destination are overwritten: for inventory targets the category is the source
+    folder, which a delivery is meant to replace whole.
     """
     if not root.is_dir():
         raise DeliveryError(f"local delivery root is not a directory: {root}")

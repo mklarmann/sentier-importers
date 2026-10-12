@@ -1,4 +1,4 @@
-"""Tests for ``scripts/run_bafu_local.py`` metadata emission."""
+"""Tests for ``scripts/run_bafu_local.py`` source metadata emission."""
 
 import importlib.util
 from pathlib import Path
@@ -6,6 +6,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from sentier_importers.sources.bafu import ecospold
+from sentier_importers.sources.bafu.provenance import BAFU_PROVENANCE, BAFU_PROVENANCE_IRI
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "run_bafu_local.py"
 
@@ -18,14 +20,16 @@ def run_bafu_local():
     return module
 
 
-def _stage(folder: Path, sources: list[str]) -> None:
+def _stage(folder: Path, sectors: list[str], sources=None, versions=None) -> None:
+    n = len(sectors)
     folder.mkdir(parents=True)
     pq.write_table(
         pa.table(
             {
-                "process_id": [f"p{i}" for i in range(len(sources))],
-                "source": sources,
-                "source_version": ["v1"] * len(sources),
+                "process_id": [f"p{i}" for i in range(n)],
+                "sector": sectors,
+                "source": sources or [ecospold.SOURCE_ID] * n,
+                "source_version": versions or [ecospold.SOURCE_VERSION] * n,
             }
         ),
         folder / "processes.parquet",
@@ -36,28 +40,62 @@ def _stage(folder: Path, sources: list[str]) -> None:
     )
 
 
-def test_sector_metadata_lists_sources_from_staged_parquet(tmp_path, run_bafu_local):
-    folder = tmp_path / "02-electricity"
-    _stage(folder, ["bafu-2026", "bafu-2026"])
-    meta = run_bafu_local.sector_metadata("02-electricity", folder)
-    assert meta["sources"] == ["bafu-2026"]
-    assert meta["schema_version"] == "0.2.0"
-    assert meta["sector"] == "electricity"
-    assert meta["rank"] == 2
-    assert meta["row_counts"] == {"processes.parquet": 2, "exchanges.parquet": 2}
+def test_source_metadata_has_exactly_the_inventory_keys_in_order(tmp_path, run_bafu_local):
+    # the sentier-inventory schema/metadata.schema.json contract (0.3.0), key for key
+    folder = tmp_path / ecospold.SOURCE_FOLDER
+    _stage(folder, ["electricity", "agriculture", "electricity"])
+    meta = run_bafu_local.source_metadata(folder)
+    assert list(meta) == [
+        "source",
+        "source_version",
+        "title",
+        "publisher",
+        "license",
+        "citation",
+        "source_url",
+        "provenance",
+        "retrieved",
+        "schema_version",
+        "sectors",
+        "row_counts",
+    ]
 
 
-def test_sector_metadata_sources_are_distinct_and_sorted(tmp_path, run_bafu_local):
-    # a folder staged by two importers lists both sources, once each, in a stable order
-    folder = tmp_path / "01-agriculture"
-    _stage(folder, ["other-1", "bafu-2026", "other-1"])
-    meta = run_bafu_local.sector_metadata("01-agriculture", folder)
-    assert meta["sources"] == ["bafu-2026", "other-1"]
+def test_source_metadata_values(tmp_path, run_bafu_local):
+    folder = tmp_path / ecospold.SOURCE_FOLDER
+    _stage(folder, ["electricity", "agriculture", "electricity"])
+    meta = run_bafu_local.source_metadata(folder)
+    assert meta["source"] == "bafu-2026"
+    assert meta["source_version"] == "v1"
+    assert meta["title"] == BAFU_PROVENANCE["title"]
+    assert meta["publisher"] == BAFU_PROVENANCE["publisher"]
+    assert meta["license"] == ecospold.LICENSE_SUMMARY
+    assert meta["citation"] == BAFU_PROVENANCE["citation"]
+    assert meta["source_url"] is None
+    assert meta["provenance"] == BAFU_PROVENANCE_IRI
+    assert meta["retrieved"] is None
+    assert meta["schema_version"] == "0.3.0"
+    assert meta["sectors"] == ["agriculture", "electricity"]  # distinct, sorted
+    assert meta["row_counts"] == {"processes.parquet": 3, "exchanges.parquet": 2}
 
 
-def test_sector_metadata_without_processes_file_has_no_sources(tmp_path, run_bafu_local):
-    folder = tmp_path / "03-chemicals"
+def test_source_metadata_rejects_a_second_source_in_the_folder(tmp_path, run_bafu_local):
+    # one folder = one release of one source; a stray row from elsewhere is a bug
+    folder = tmp_path / ecospold.SOURCE_FOLDER
+    _stage(folder, ["waste", "waste"], sources=["bafu-2026", "other-1"])
+    with pytest.raises(ValueError, match="source"):
+        run_bafu_local.source_metadata(folder)
+
+
+def test_source_metadata_rejects_a_second_version_in_the_folder(tmp_path, run_bafu_local):
+    folder = tmp_path / ecospold.SOURCE_FOLDER
+    _stage(folder, ["waste", "waste"], versions=["v1", "v2"])
+    with pytest.raises(ValueError, match="source_version"):
+        run_bafu_local.source_metadata(folder)
+
+
+def test_source_metadata_requires_the_processes_file(tmp_path, run_bafu_local):
+    folder = tmp_path / ecospold.SOURCE_FOLDER
     folder.mkdir()
-    meta = run_bafu_local.sector_metadata("03-chemicals", folder)
-    assert meta["sources"] == []
-    assert meta["row_counts"] == {}
+    with pytest.raises(FileNotFoundError):
+        run_bafu_local.source_metadata(folder)

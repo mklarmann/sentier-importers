@@ -444,6 +444,8 @@ sources:
   # Vocab payload files are content-named, never source-named (rule
   # 2026-08-07): one file per sector for process terms, one per compartment
   # for elementary flows; `emit_filename` is the slug the source filters on.
+  # Inventory files instead live in one folder per source release
+  # (data/bafu-2026-v1/), sector being a column there (spec 2026-10-12).
   # Citation: "Life Cycle Inventory database of the Swiss Federal
   # Administration, BAFU:2026".
   # ---------------------------------------------------------------------------
@@ -469,7 +471,7 @@ sources:
     enabled: false
 
   # 11,947 BAFU process terms (incl. obsolete link targets), one per-sector
-  # file (emit_filename = rank-free sector slug from ecospold.SECTORS).
+  # file (emit_filename = sector id from ecospold.SECTORS).
   - name: bafu-processes-agriculture
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
@@ -830,13 +832,17 @@ sources:
       check_existing: true
     enabled: false
 
-  # Full inventory, one processes/exchanges pair per sector folder (sector map in
-  # sources/bafu/ecospold.py). emit_filename gives the contract file names.
+  # Full inventory, one processes/exchanges pair in the source folder
+  # data/bafu-2026-v1/ (category = <source>-<source_version>, one folder per
+  # published release). Every dataset is emitted; its sector is the `sector`
+  # column on processes.parquet (map in sources/bafu/ecospold.py). A delivery
+  # replaces the folder whole; sources never share a folder. emit_filename
+  # gives the contract file names.
 
-  - name: bafu-agriculture-processes
+  - name: bafu-processes
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
-    category: 01-agriculture
+    category: bafu-2026-v1
     access: licensed
     emit_filename: processes
     fetch:
@@ -846,270 +852,10 @@ sources:
     validate_against: null
     enabled: false
 
-  - name: bafu-agriculture-exchanges
+  - name: bafu-exchanges
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
-    category: 01-agriculture
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-electricity-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 02-electricity
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-electricity-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 02-electricity
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-chemicals-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 03-chemicals
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-chemicals-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 03-chemicals
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-transport-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 04-transport
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-transport-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 04-transport
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-energy-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 05-energy
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-energy-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 05-energy
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-waste-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 06-waste
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-waste-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 06-waste
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-construction-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 07-construction
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-construction-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 07-construction
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-materials-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 08-materials
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-materials-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 08-materials
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-electronics-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 09-electronics
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-electronics-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 09-electronics
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-building-services-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 10-building-services
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-building-services-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 10-building-services
-    access: licensed
-    emit_filename: exchanges
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-obsolete-processes
-    module: sentier_importers.sources.bafu.inventory_processes
-    target: sentier_inventory
-    category: 99-obsolete
-    access: licensed
-    emit_filename: processes
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    validate_against: null
-    enabled: false
-
-  - name: bafu-obsolete-exchanges
-    module: sentier_importers.sources.bafu.inventory_exchanges
-    target: sentier_inventory
-    category: 99-obsolete
+    category: bafu-2026-v1
     access: licensed
     emit_filename: exchanges
     fetch:

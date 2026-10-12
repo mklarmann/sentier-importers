@@ -45,7 +45,7 @@ class BafuVocabProcessesSource(Source):
         sector = self.config.emit_filename
         rows: Rows = []
         for record in records:
-            if sector and ecospold.sector_slug(ecospold.sector_for(record["category"])) != sector:
+            if sector and ecospold.sector_for(record["category"]) != sector:
                 continue
             row: Record = {
                 "iri": process_iri(record["uuid"]),

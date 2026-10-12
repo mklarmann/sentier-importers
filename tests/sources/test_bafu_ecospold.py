@@ -56,13 +56,44 @@ def test_parse_zip_is_memoized():
 
 
 def test_sector_map_routes_all_spec_categories():
-    # every category maps to exactly one sector folder; spec table has 59 categories
+    # every category maps to exactly one sector id; spec table has 59 categories
     cats = [c for cs in ecospold.SECTORS.values() for c in cs]
     assert len(cats) == len(set(cats)) == 59
-    assert ecospold.sector_for("electricity") == "02-electricity"
-    assert ecospold.sector_for("natural gas") == "05-energy"
-    assert ecospold.sector_for("material, obsolete") == "99-obsolete"
-    assert ecospold.sector_for("energy supply, kbob recommendation") == "05-energy"
+    assert ecospold.sector_for("electricity") == "electricity"
+    assert ecospold.sector_for("natural gas") == "energy"
+    assert ecospold.sector_for("material, obsolete") == "obsolete"
+    assert ecospold.sector_for("energy supply, kbob recommendation") == "energy"
+
+
+def test_sector_ids_are_the_inventory_enum_values():
+    # sector is a column since sentier-inventory schema 0.3.0: ids are bare, rank-free,
+    # and must spell exactly the ``sector`` enum of schema/common.yaml there
+    assert list(ecospold.SECTORS) == [
+        "agriculture",
+        "electricity",
+        "chemicals",
+        "transport",
+        "energy",
+        "waste",
+        "construction",
+        "materials",
+        "electronics",
+        "building-services",
+        "obsolete",
+    ]
+    assert not hasattr(ecospold, "sector_slug")  # nothing left to strip
+
+
+def test_source_folder_is_source_dash_version():
+    # one sentier-inventory folder per published release: data/<source>-<source_version>/
+    assert ecospold.SOURCE_FOLDER == f"{ecospold.SOURCE_ID}-{ecospold.SOURCE_VERSION}"
+    assert ecospold.SOURCE_FOLDER == "bafu-2026-v1"
+
+
+def test_license_summary_names_the_tou_clauses():
+    # the metadata.json ``license`` text: the BAFU terms of use, clause by clause
+    for clause in ("§2.1", "§2.2", "§2.3", "§3"):
+        assert clause in ecospold.LICENSE_SUMMARY
 
 
 def test_flow_id_deterministic_uuid5():

@@ -50,10 +50,10 @@ def test_registry_parses_emit_filename(tmp_path):
     path.write_text(
         """
 sources:
-  - name: bafu-electricity-processes
+  - name: bafu-processes
     module: m.a
     target: sentier_inventory
-    category: 02-electricity
+    category: bafu-2026-v1
     emit_filename: processes
     fetch: { url: "file:///tmp/x.zip", format: zip }
     output_format: parquet
@@ -73,11 +73,28 @@ def test_deliver_local_copies_into_category_dir(tmp_path):
     (clone / "data").mkdir(parents=True)
 
     dests = deliver_mod.deliver_local(
-        [staged], get_target("sentier_inventory"), category="02-electricity", root=clone
+        [staged], get_target("sentier_inventory"), category="bafu-2026-v1", root=clone
     )
 
-    assert dests == [clone / "data" / "02-electricity" / "processes.parquet"]
+    assert dests == [clone / "data" / "bafu-2026-v1" / "processes.parquet"]
     assert dests[0].read_bytes() == b"pq"
+
+
+def test_deliver_local_overwrites_the_source_folder_file(tmp_path):
+    # inventory category = source folder: a re-delivery replaces the previous file whole
+    # (sources never share a folder, so nothing of another source can be lost)
+    staged = tmp_path / "processes.parquet"
+    staged.write_bytes(b"new")
+    clone = tmp_path / "clone"
+    dest = clone / "data" / "bafu-2026-v1" / "processes.parquet"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"old")
+
+    deliver_mod.deliver_local(
+        [staged], get_target("sentier_inventory"), category="bafu-2026-v1", root=clone
+    )
+
+    assert dest.read_bytes() == b"new"
 
 
 def test_deliver_local_requires_existing_root(tmp_path):

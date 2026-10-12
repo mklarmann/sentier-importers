@@ -31,14 +31,27 @@ SOURCE_ID = "bafu-2026"
 #: Publisher's release of that edition (``processes.source_version``).
 SOURCE_VERSION = "v1"
 
+#: sentier-inventory folder holding this release: ``data/<source>-<source_version>/``.
+#: One folder per published release; a delivery rewrites it whole.
+SOURCE_FOLDER = f"{SOURCE_ID}-{SOURCE_VERSION}"
+
+#: BAFU terms of use, clause by clause, as written into the folder's ``metadata.json``.
+LICENSE_SUMMARY = (
+    "BAFU Terms of Use: free use and processing, no redistribution as or inside another "
+    "database without agreement (§2.1/§2.2), share-alike and change documentation for "
+    "modified data (§3), citation required (§2.3)"
+)
+
 #: Fixed namespace for deterministic elementary-flow ids (public recipe: locally
 #: regenerated data is bit-identical across users).
 BAFU_FLOW_NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://vocab.sentier.dev/flows/bafu/")
 
-#: Sector folder -> BAFU ``referenceFunction`` categories (covers all 59 observed).
+#: Sector id -> BAFU ``referenceFunction`` categories (covers all 59 observed).
+#: The ids are the ``processes.sector`` enum of sentier-inventory (schema 0.3.0); the
+#: dict order is the former folder rank order and names the vocab per-sector files.
 SECTORS: dict[str, list[str]] = {
-    "01-agriculture": ["agricultural", "food industry"],
-    "02-electricity": [
+    "agriculture": ["agricultural", "food industry"],
+    "electricity": [
         "electricity",
         "electricity by fuel",
         "photovoltaic",
@@ -46,9 +59,9 @@ SECTORS: dict[str, list[str]] = {
         "power plants",
         "impoundment",
     ],
-    "03-chemicals": ["chemicals"],
-    "04-transport": ["transport systems"],
-    "05-energy": [
+    "chemicals": ["chemicals"],
+    "transport": ["transport systems"],
+    "energy": [
         "natural gas",
         "heat",
         "fuels",
@@ -60,7 +73,7 @@ SECTORS: dict[str, list[str]] = {
         "pipeline",
         "energy supply, kbob recommendation",
     ],
-    "06-waste": [
+    "waste": [
         "waste management",
         "landfill",
         "construction waste",
@@ -74,7 +87,7 @@ SECTORS: dict[str, list[str]] = {
         "recycling",
         "landfarming",
     ],
-    "07-construction": [
+    "construction": [
         "construction materials",
         "construction",
         "construction processes",
@@ -84,7 +97,7 @@ SECTORS: dict[str, list[str]] = {
         "insulation materials",
         "ceramics",
     ],
-    "08-materials": [
+    "materials": [
         "wood",
         "metals",
         "minerals",
@@ -94,9 +107,9 @@ SECTORS: dict[str, list[str]] = {
         "textiles",
         "cardboard",
     ],
-    "09-electronics": ["electronics", "computers & network", "mechanical"],
-    "10-building-services": ["ventilation", "water", "private consumption", "Others"],
-    "99-obsolete": [
+    "electronics": ["electronics", "computers & network", "mechanical"],
+    "building-services": ["ventilation", "water", "private consumption", "Others"],
+    "obsolete": [
         "material, obsolete",
         "energy, obsolete",
         "processing, obsolete",
@@ -110,26 +123,17 @@ _CATEGORY_TO_SECTOR: dict[str, str] = {
 
 _FILENAME_RE = re.compile(r"process_(.+)\.xml$")
 
-#: Parsed-records memo, keyed by content digest — 22 inventory slices + 17 vocab
+#: Parsed-records memo, keyed by content digest — 2 inventory tables + 17 vocab
 #: slices reuse one 37 MB parse when run in a single process.
 _PARSE_CACHE: dict[str, Records] = {}
 
 
 def sector_for(category: str) -> str:
-    """Sector folder for a BAFU category; raises ``ParseError`` on unknown categories."""
+    """Sector id for a BAFU category; raises ``ParseError`` on unknown categories."""
     try:
         return _CATEGORY_TO_SECTOR[category]
     except KeyError:
         raise ParseError(f"BAFU category not in the sector map: {category!r}") from None
-
-
-def sector_slug(sector: str) -> str:
-    """Rank-free sector name (``01-agriculture`` -> ``agriculture``).
-
-    Vocab payload files are content-named per sector without the inventory
-    folder's rank prefix.
-    """
-    return sector.split("-", 1)[1]
 
 
 def compartment_slug(compartment: str) -> str:

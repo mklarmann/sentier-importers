@@ -1,4 +1,7 @@
-"""BAFU-2026 -> sentier-inventory ``exchanges.parquet``, one registry entry per sector.
+"""BAFU-2026 -> sentier-inventory ``exchanges.parquet``, one registry entry per release.
+
+Every dataset's exchanges are emitted into the one source folder
+(``ecospold.SOURCE_FOLDER``); the sector lives on ``processes.parquet`` only.
 
 Flow ids: the production flow is the process's own UUID; technosphere
 inputs resolve through the export-wide ``number -> uuid`` map (exact — 0
@@ -21,7 +24,7 @@ def _flow_type(group: str, group_code: int | None) -> str:
 
 
 class BafuInventoryExchangesSource(Source):
-    """Emit the exchange table rows for one sector folder."""
+    """Emit the exchange table rows of the whole release."""
 
     def parse(self, raw: RawData) -> Records:
         return ecospold.parse_ecospold_zip(raw)
@@ -30,8 +33,6 @@ class BafuInventoryExchangesSource(Source):
         number_to_uuid = {r["number"]: r["uuid"] for r in records}
         rows: Rows = []
         for record in records:
-            if ecospold.sector_for(record["category"]) != self.config.category:
-                continue
             for exchange in record["exchanges"]:
                 flow_type = _flow_type(exchange["group"], exchange["group_code"])
                 if flow_type == "production":

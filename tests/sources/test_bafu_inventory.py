@@ -2,6 +2,7 @@
 
 import math
 
+import pytest
 from sentier_importers.core.registry import load_registry
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.sources.bafu import ecospold
@@ -10,13 +11,16 @@ from sentier_importers.sources.bafu.inventory_processes import BafuInventoryProc
 
 from tests.sources.bafu_fixture import UUID_ELEC, UUID_GAS, UUID_OBSOLETE, fixture_zip
 
+#: Every fixture dataset with the sector its BAFU category routes to.
+FIXTURE_SECTORS = {UUID_ELEC: "electricity", UUID_GAS: "energy", UUID_OBSOLETE: "obsolete"}
 
-def _cfg(name, category, module):
+
+def _cfg(name, module):
     return SourceConfig(
         name=name,
         module=f"sentier_importers.sources.bafu.{module}",
         target="sentier_inventory",
-        category=category,
+        category=ecospold.SOURCE_FOLDER,
         fetch_url="unused://",
         fetch_format="zip",
         output_format="parquet",
@@ -24,27 +28,55 @@ def _cfg(name, category, module):
     )
 
 
-def _processes(category="02-electricity"):
-    src = BafuInventoryProcessesSource(
-        _cfg("bafu-electricity-processes", category, "inventory_processes")
-    )
+def _processes():
+    src = BafuInventoryProcessesSource(_cfg("bafu-processes", "inventory_processes"))
     return src.transform(src.parse(fixture_zip()))
 
 
-def _exchanges(category="02-electricity"):
-    src = BafuInventoryExchangesSource(
-        _cfg("bafu-electricity-exchanges", category, "inventory_exchanges")
-    )
+def _exchanges():
+    src = BafuInventoryExchangesSource(_cfg("bafu-exchanges", "inventory_exchanges"))
     return src.transform(src.parse(fixture_zip()))
 
 
-def test_processes_filters_to_sector():
-    rows = _processes()
-    assert [r["process_id"] for r in rows] == [UUID_ELEC]
+def _exchanges_by_name(process_id=UUID_ELEC):
+    return {r["flow_name"]: r for r in _exchanges() if r["process_id"] == process_id}
+
+
+def _process(uuid):
+    (row,) = [r for r in _processes() if r["process_id"] == uuid]
+    return row
+
+
+def test_processes_emits_every_dataset_once():
+    # one source folder holds the whole release: no per-sector filtering any more
+    assert [r["process_id"] for r in _processes()] == list(FIXTURE_SECTORS)
+
+
+@pytest.mark.parametrize("uuid,sector", sorted(FIXTURE_SECTORS.items()))
+def test_processes_sector_column_from_bafu_category(uuid, sector):
+    assert _process(uuid)["sector"] == sector
+
+
+def test_processes_sector_column_sits_after_process_type():
+    # column order is the sentier-inventory schema/process.yaml order
+    columns = list(_process(UUID_ELEC))
+    assert columns[columns.index("process_type") + 1] == "sector"
+    assert columns[: columns.index("technology")] == [
+        "process_id",
+        "name",
+        "reference_product",
+        "reference_unit",
+        "reference_amount",
+        "location",
+        "process_type",
+        "sector",
+        "source",
+        "source_version",
+    ]
 
 
 def test_processes_row_matches_inventory_schema():
-    (row,) = _processes()
+    row = _process(UUID_ELEC)
     assert row["name"] == "Electricity, at test plant"
     assert row["reference_product"] == "Electricity, at test plant"
     assert row["reference_unit"] == "kWh"
@@ -61,27 +93,27 @@ def test_processes_row_matches_inventory_schema():
 def test_processes_source_id_is_edition_not_version():
     # ``source`` names the edition only; a v1 -> v2 re-release must not rename the
     # database a consumer's project depends on. The release lives in source_version.
-    (row,) = _processes()
+    row = _process(UUID_ELEC)
     assert "v1" not in row["source"]
     assert row["source"] == ecospold.SOURCE_ID
     assert row["source_version"] == ecospold.SOURCE_VERSION
 
 
 def test_processes_obsolete_sector_flags_comment():
-    (row,) = _processes(category="99-obsolete")
-    assert row["process_id"] == UUID_OBSOLETE
+    row = _process(UUID_OBSOLETE)
+    assert row["sector"] == "obsolete"
     assert "obsolete" in row["comment"]
 
 
-def test_exchanges_filters_to_sector_processes():
+def test_exchanges_emits_every_dataset_and_carries_no_sector():
     rows = _exchanges()
-    assert {r["process_id"] for r in rows} == {UUID_ELEC}
-    assert len(rows) == 10
+    assert {r["process_id"] for r in rows} == set(FIXTURE_SECTORS)
+    assert len([r for r in rows if r["process_id"] == UUID_ELEC]) == 10
+    assert all("sector" not in r for r in rows)  # sector lives on processes only
 
 
 def test_exchanges_flow_ids_and_types():
-    rows = _exchanges()
-    by_name = {r["flow_name"]: r for r in rows}
+    by_name = _exchanges_by_name()
 
     prod = by_name["Electricity, at test plant"]
     assert (prod["flow_type"], prod["direction"]) == ("production", "output")
@@ -105,8 +137,7 @@ def test_exchanges_flow_ids_and_types():
 
 
 def test_exchanges_uncertainty_mapping():
-    rows = _exchanges()
-    by_name = {r["flow_name"]: r for r in rows}
+    by_name = _exchanges_by_name()
 
     tech = by_name["Natural gas, test supply"]  # EcoSpold lognormal -> bw 2
     assert tech["uncertainty_type"] == 2
@@ -123,11 +154,11 @@ def test_exchanges_uncertainty_mapping():
 
 def test_registry_declares_full_bafu_family():
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
-    # 11 sectors x 2 inventory tables + source record + 11 per-sector process
+    # 2 inventory tables (one source folder) + source record + 11 per-sector process
     # term files + 6 per-compartment flow term files + the curated crosswalk
     # (biosphere-1-curated) + the public-matching crosswalk (biosphere-3-matched)
     # + the coverage sidecar + the nomenclature crosswalk (biosphere-4-nomenclature)
-    assert len(bafu) == 44
+    assert len(bafu) == 24
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
@@ -145,14 +176,16 @@ def test_registry_declares_full_bafu_family():
         "biosphere-4-nomenclature",
     }
 
-    inventory = [c for c in bafu if c.target == "sentier_inventory"]
-    assert len(inventory) == 22
-    assert {c.category for c in inventory} == set(ecospold.SECTORS)
-    assert {c.emit_filename for c in inventory} == {"processes", "exchanges"}
+    # the inventory folder is the source release: data/bafu-2026-v1/{processes,exchanges}
+    inventory = {c.name: c for c in bafu if c.target == "sentier_inventory"}
+    assert list(inventory) == ["bafu-processes", "bafu-exchanges"]
+    assert {c.category for c in inventory.values()} == {ecospold.SOURCE_FOLDER}
+    assert [c.emit_filename for c in inventory.values()] == ["processes", "exchanges"]
+    assert {c.access for c in inventory.values()} == {"licensed"}
 
     vocab = [c for c in bafu if c.target == "sentier_vocab"]
     processes = {c.emit_filename for c in vocab if c.category == "processes"}
-    assert processes == {sector.split("-", 1)[1] for sector in ecospold.SECTORS}
+    assert processes == set(ecospold.SECTORS)
     flows = {c.emit_filename for c in vocab if c.category == "elementary-flows"}
     assert flows == {
         "emissions-to-air",
