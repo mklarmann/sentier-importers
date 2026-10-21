@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import jsonschema
+import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
 from sentier_importers.core.pipeline import _assemble
@@ -160,3 +161,13 @@ def test_assembled_package_matches_randonneur_schema():
 
     schema = json.loads(_SCHEMA.read_text())
     jsonschema.validate(package, schema)  # raises if invalid
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1000.0])
+def test_transform_refuses_non_positive_or_non_finite_conversion(bad):
+    src = AgribalyseBiosphereMappingsSource(_config())
+    records = src.parse(_raw())
+    water = next(r for r in records if r["source_name"] == "Water m3")
+    water["unit_conversion"] = bad
+    with pytest.raises(ValueError, match="Water m3: unit_conversion must be positive and finite"):
+        src.transform(records)

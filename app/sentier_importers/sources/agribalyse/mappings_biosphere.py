@@ -11,6 +11,7 @@ Scope guardrail (2026-07-10 decision — ignore ecoinvent nomenclature):
 """
 
 import io
+import math
 
 import pyarrow.parquet as pq
 from sentier_importers.core.source import Source
@@ -81,8 +82,19 @@ class AgribalyseBiosphereMappingsSource(Source):
 
             entry: Record = {"source": source, "target": target}
             conversion = rec.get("unit_conversion")
-            if conversion is not None and conversion != 1.0:
-                entry["conversion_factor"] = float(conversion)
+            if conversion is not None:
+                try:
+                    factor = float(conversion)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"{source_name}: unit_conversion must be positive and finite"
+                    ) from exc
+                # NaN != 1.0, so without this check a NaN reached the package as
+                # "conversion_factor": NaN, which is not valid JSON.
+                if isinstance(conversion, bool) or not math.isfinite(factor) or factor <= 0:
+                    raise ValueError(f"{source_name}: unit_conversion must be positive and finite")
+                if factor != 1.0:
+                    entry["conversion_factor"] = factor
             provenance = rec.get("provenance") or ""
             tier = rec.get("priority_tier")
             entry["comment"] = f"{provenance} (priority tier {tier})"
