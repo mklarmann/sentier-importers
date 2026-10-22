@@ -3,9 +3,9 @@ import json
 from pathlib import Path
 
 import jsonschema
-import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
